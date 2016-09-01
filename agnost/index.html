@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="UTF-8">
+    <title>Agnost - make code, not war</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="/stylesheets/normalize.css" media="screen">
+    <link href='https://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" type="text/css" href="/stylesheets/stylesheet.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="/stylesheets/github-light.css" media="screen">
+  </head>
+  <body>
+    <section class="page-header">
+      <h1 class="project-name">Agnost</h1>
+      <h2 class="project-tagline">Make code, not war</h2>
+    </section>
+
+    <section class="main-content">
+
+<h3>What?</h3>
+
+<p>Standardised software development patterns implemented in various languages, to enable you to architect your software focussing on the important stuff while vieving frameworks and transport technologies as mere implementation details that you can easily switch out according to your needs by enabling you to postpone as many decisions as possible until the need actually arises to decide.</p>
+
+<h3>Why? Or: Let me tell you a story</h3>
+
+<p>Once upon a time, we started to program computers. It was hard, so we invented all kinds of things to make things more understandable in order to make more cool stuff. From punch cards to assembly, to procedural programming in C, to Object Oriented programming and so on. Lots of nice things were built and ideas were born. Then however, came a dark age in which the same things got re-invented over and over again in slightly different packaging, and men (as the industry sadly has grown into on dominated by males) fought religious wars over technologies that all promised us (or at least the hype machine did) to make us productive and happy. We ended up in vicious hype cycles, all solving the same problems over and over again, locking ourselves into different frameworks and programming languages.</p>
+
+<p>Why do we accept this situation? And more importantly, how can we solve it? With this project, we hope to reverse some of the damage by reminding us of the ancient ways of clean architecture, to provide us with communal thought patterns to find harmony again.</p>
+
+<h3>How?</h3>
+
+<p>Let's start with an example. You want not only people to give feedback about hotels, but hotels about their clients. Here's the flow:</p>
+
+<ol>
+    <li>A logged in user starts at the hotel detail page</li>
+    <li>He clicks on 'rate this hotel'</li>
+    <li>He sees a rating bar and clicks on 4 starts.</li>
+    <li>His rating is sumbitted and the hotel is notified.</li>
+    <li>The hotel is given the opportunity with a dealine of 2 weeks to rate the guest.</li>
+    <li>Either when the hotel rates the guest, or the deadline expires, the ratings are made public.</li>
+</ol>
+
+<p>Assuming we decide to use JavaScript, what next? Do we use Express or Sails.js? MongoDB, MariaDB, AWS DynamoDB? Maybe we use Firebase and skip the backend for now? Or use Lambda for the API? What if we just focus on the business logic for now and leave the rest for later?</p>
+
+<pre><code>
+class RatingsLogic {
+    Errors = {
+        ALREADY_RATED: 'tried to give duplicate rating'
+    };
+
+    construct({store, notifier}) {
+        this.store = store;
+        this.notifier = this.notifier;
+    }
+    
+    rateObject({senderID, receiverID, fields}) {
+        var rateResult = this.store.rateObject({senderID, receiverID, fields,
+                                                options: {ifExists: 'abort'}});
+        if (rateResult.alreadyExisted) {
+            return {error: RatingsLogic.Errors.ALREADY_RATED};
+        }
+        
+        var otherRating = this.store.getOtherRating({senderID, receiverID});
+        if (otherRating) {
+            this.store.publishRatings({senderID, receiverID});
+            this.notifier.ratingGivenBack({senderID, receiverID});
+            this.notifier.ratingsPublished({senderID, receiverID});
+        } else {
+            this.notifier.ratingGivenFirst({senderID, receiverID});
+        }
+    }
+    
+    publishRatingsPastDeadline({now}) {
+        var ratings = this.store.getCrossedDeadlines({now});
+        ratings.forEach(rating => {
+            this.store.publishRatings({senderID: rating.senderID,
+                                       receiverID: rating.receiverID});
+        });
+    }
+}
+</code></pre>
+</p>
+
+<p>Maybe we should test this stuff to see if it works? But do we want to write a back-end already? Why should we? Let's just fake it:
+
+<pre><code>
+class RatingsMemoryStore {
+    constructor({timeToRateInMS}) {
+        this.ratings = {};
+        this.ratingDeadlines = [];
+        this.timeToRateInMS = timeToRateInMS;
+    }
+    
+    rateObject({senderID, receiverID, fields, options = {ifExists: 'abort'}}) {
+        var receiverRatings = this.ratings[receiverID];
+        // var senderRatings = this.ratings[senderID];
+        if (receiverRatings[senderID] !== undefined) {
+            if (ifExists == 'abort') {
+                return {alreadyExisted: true};
+            } else {
+                throw Error('not implemented in demo');
+            }
+        }
+        
+        var rating = receiverRatings[senderID] = {fields, published: false};
+        this.ratingDeadlines.push({
+            deadline: moment().add(this.timeToRateInMS, 'miliseconds')
+            senderID,
+            receiverID
+        });
+    }
+    
+    publishRatings({senderID, receiverID}) {
+        this.ratings[senderID][receiverID].published = true;
+        this.ratings[receiverID][senderID].published = true;
+    }
+    
+    getCrossedDeadlines({now}) {
+        return this.ratingDeadlines.filter(ratingDeadline => 
+            now.isAfter(ratingDeadline.deadline)
+        );
+    }
+    
+    isRatingPublished({senderID, receiverID}) {
+        return ratings[senderID] !== undefined
+               &amp;&amp; ratings[senderID][receiverID] !== undefined
+               &amp;&amp; ratings[senderID][receiverID].published;
+    }
+}
+
+class RatingsMemoryNotifier {
+    constructor() {
+        this.notifications = {};
+    }
+    
+    ratingGivenFirst({senderID, receiverID}) {
+        this.notifications.push({type: 'rating_given_first', senderID, receiverID});
+    }
+    
+    ratingGivenBack({senderID, receiverID}) {
+        this.notifications.push({type: 'rating_given_back', senderID, receiverID});
+    }
+    
+    ratingsPublished({senderID, receiverID}) {
+        this.notifications.push({type: 'ratings_published', senderID, receiverID});
+    }
+}
+</code></pre>
+
+</p>
+
+<p>
+Which we'd then use as follows:
+
+<pre><code>
+var store = new RatingsMemoryStore();
+var notifier = new RatingsMemoryNotifier();
+var logic = new RatingsLogic(store, notifier);
+logic.rateObject({senderID: 'joe', receiverID: 'rob', fields: {score: 4}});
+assert(store.isRatingPublished(senderID, receiverID) === false);
+assert(notifier.notifications.length === 1);
+logic.rateObject({senderID: 'rob', receiverID: 'joe', fields: {score: 4.5}});
+assert(store.isRatingPublished(senderID, receiverID) === true);
+</code></pre>
+
+</p>
+
+<p>
+What have we gained by doing this? 1) Note that the logic code only focusses on the flow of the program, instead of how to store it, which is handled by the storage class, 2) This code is easy to unit test, 3) we can easily shift this code to the client side and deploy that to a demo server to show a prototype without a backend that still shows the functionality, and 4) we can put in whatever backend we like and we don't really care what kind of environment we're in: this code is just as usable with a big data store, as it could be in a peer-to-peer video game.
+</p>
+
+<p>
+But what if we want to expose this thing though a REST API? Well, what if we could just do this?
+
+<pre><code>
+var apiLayout = {
+    rateObject: {
+        'url': '/rating/&lt;senderID&gt;/&lt;receiverID&gt;',
+        'params': ['senderID', 'receiverID', 'fields'],
+        'type': 'insert'
+    },
+    isRatingPublished: {
+        'url': '/rating/&lt;senderID&gt;/&lt;receiverID&gt;/published',
+        'params': ['senderID', 'receiverID'],
+        'type': 'retrieve'
+    }
+};
+
+agnost.express.configureRestAPI(express, {apiLayout, logic, store});
+
+// or maybe we want to use WebSockets instead of HTTP?
+agnost.socketio.configureSocketIO(socket, {apiLayout, logic, store});
+</code></pre>
+
+</p>
+
+<p>In real life however, we'd want to use promises, use functional programming where possible, easily shift logic between front- and back-end (if such a thing exists in what you're building), have awesome debugging, maybe even live or post-mortem dumped to a file on a server, be able to distribute heavy processing over multiple servers, communicate between different microservices, and so on. These building blocks are prepared by Agnost, for you to build awesome things with, usable with whatever shiny framework you prefer to use, or not use.</p>
+
+<p>Read the docs and have fun!</p>
+
+      <footer class="site-footer">
+
+        <span class="site-footer-credits">Using the <a href="https://github.com/jasonlong/cayman-theme">Cayman theme</a> by <a href="https://twitter.com/jasonlong">Jason Long</a>.</span>
+      </footer>
+
+    </section>
+
+  
+  </body>
+</html>
